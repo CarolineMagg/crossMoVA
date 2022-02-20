@@ -1,0 +1,43 @@
+#slider-mask-opacity .rc-slider-track {
+  background-color: #67001F;
+}
+
+#slider-mask-opacity .rc-slider-dot-active {
+  border-color: #67001F;
+  border: solid 2px #67001F;
+}
+
+#slider-mask-opacity .rc-slider-handle {
+  background-color: #67001F;
+  border-color: #67001F;
+}
+
+#slider-mask-opacity .rc-slider-handle:hover {
+  border-color: #67001F;
+}
+
+#slider-mask-opacity .rc-slider-handle-active:active {
+  border-color: #67001F;
+}
+
+#slider-gt-opacity .rc-slider-track {
+  background-color: black;
+}
+
+#slider-gt-opacity .rc-slider-dot-active {
+  border-color: black;
+  border: solid 2px black;
+}
+
+#slider-gt-opacity .rc-slider-handle {
+  background-color: black;
+  border-color: black;
+}
+
+#slider-gt-opacity .rc-slider-handle:hover {
+  border-color: black;
+}
+
+#slider-gt-opacity .rc-slider-handle-active:active {
+  border-color: black;
+}
