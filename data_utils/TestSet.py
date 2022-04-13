@@ -47,15 +47,25 @@ class TestSet:
         self._data_container_0_1 = []
         self._data_container_1_1 = []
         self._df_evaluation = []
-        self._df_radiomics_3d = []
-        self._df_radiomics_3d_margin = []
-        self._df_radiomics_2d = []
+        self._df_radiomics_gt_3d = []
+        self._df_radiomics_gt_3d_margin = {1: [],
+                                           2: [],
+                                           3: [],
+                                           4: [],
+                                           5: []}
+        self._df_radiomics_gt_2d = []
+        self._df_radiomics_pred_2d = []
         self._patient_ids = []
         self._patient_ids_radiomics = []
         self._df_total = pd.DataFrame()
-        self._df_signature_3d = pd.DataFrame()
-        self._df_signature_3d_margin = pd.DataFrame()
-        self._df_signature_2d = pd.DataFrame()
+        self._df_signature_gt_3d = pd.DataFrame()
+        self._df_signature_gt_3d_margin = {1: pd.DataFrame(),
+                                           2: pd.DataFrame(),
+                                           3: pd.DataFrame(),
+                                           4: pd.DataFrame(),
+                                           5: pd.DataFrame()}
+        self._df_signature_gt_2d = pd.DataFrame()
+        self._df_radiomics_pred_2d_flatten = pd.DataFrame()
         self._df_volume = pd.DataFrame()
 
         if load:
@@ -118,16 +128,20 @@ class TestSet:
                 if evaluation:
                     self._df_evaluation.append(pd.read_json(os.path.join(folder, "evaluation.json")))
                 if radiomics:
-                    if os.path.isfile(os.path.join(folder, "radiomics.json")):
-                        with open(os.path.join(folder, "radiomics.json")) as json_file:
-                            self._df_radiomics_3d.append(json.load(json_file))
+                    if os.path.isfile(os.path.join(folder, "radiomics_gt_3d.json")):
+                        with open(os.path.join(folder, "radiomics_gt_3d.json")) as json_file:
+                            self._df_radiomics_gt_3d.append(json.load(json_file))
                         patient_ids_radiomics.append(patient_id)
-                    if os.path.isfile(os.path.join(folder, "radiomics_2d.json")):
-                        with open(os.path.join(folder, "radiomics_2d.json")) as json_file:
-                            self._df_radiomics_2d.append(json.load(json_file))
-                    if os.path.isfile(os.path.join(folder, "radiomics_gt_contour1.json")):
-                        with open(os.path.join(folder, "radiomics_gt_contour1.json")) as json_file:
-                            self._df_radiomics_3d_margin.append(json.load(json_file))
+                    if os.path.isfile(os.path.join(folder, "radiomics_gt_2d.json")):
+                        with open(os.path.join(folder, "radiomics_gt_2d.json")) as json_file:
+                            self._df_radiomics_gt_2d.append(json.load(json_file))
+                    if os.path.isfile(os.path.join(folder, "radiomics_pred_2d.json")):
+                        with open(os.path.join(folder, "radiomics_pred_2d.json")) as json_file:
+                            self._df_radiomics_pred_2d.append(json.load(json_file))
+                    for thickness in range(1, 6):
+                        if os.path.isfile(os.path.join(folder, f"radiomics_gt_contour{thickness}.json")):
+                            with open(os.path.join(folder, f"radiomics_gt_contour{thickness}.json")) as json_file:
+                                self._df_radiomics_gt_3d_margin[thickness].append(json.load(json_file))
                 patient_ids.append(patient_id)
             self._patient_ids = patient_ids
             self._patient_ids_radiomics = patient_ids_radiomics
@@ -137,20 +151,26 @@ class TestSet:
             logging.info("Load all evaluation information.")
             self._df_total = pd.read_json(file_path)
 
-        file_path = "/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_all.json"
+        file_path = "/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_gt_3d_all.json"
         if os.path.isfile(file_path):
             logging.info("Load all radiomics features for full mask.")
-            self._df_signature_3d = pd.read_json(file_path)
+            self._df_signature_gt_3d = pd.read_json(file_path)
 
-        file_path = "/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_all_margin.json"
-        if os.path.isfile(file_path):
-            logging.info("Load all radiomics features for margin mask.")
-            self._df_signature_3d_margin = pd.read_json(file_path)
+        for thickness in range(1, 6):
+            file_path = f"/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_gt_margin{thickness}_all.json"
+            if os.path.isfile(file_path):
+                logging.info(f"Load all radiomics features for margin mask with thickness {thickness}.")
+                self._df_signature_gt_3d_margin[thickness] = pd.read_json(file_path)
 
-        file_path = "/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/volumentric.json"
+        file_path = "/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/volumentric_all.json"
         if os.path.isfile(file_path):
             logging.info("Load volumetric information.")
             self._df_volume = pd.read_json(file_path)
+
+        file_path = "/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_pred_flatten_all.json"
+        if os.path.isfile(file_path):
+            logging.info("Load flatten radiomics features of prediction.")
+            self._df_radiomics_pred_2d_flatten = pd.read_json(file_path)
 
     def get_patient_data(self, idx, alpha=0, beta=1):
         if alpha == 0 and beta == 1:
@@ -236,24 +256,29 @@ class TestSet:
         return df_sign
 
     @property
-    def df_signature_3d(self):
-        if self._full_mask:
-            if len(self._df_signature_3d) == 0:
-                logging.info("Generate signature df for full mask.")
-                self._df_signature_3d = self._generate_signature_3d(self._df_radiomics_3d)
-            return self._df_signature_3d
-        else:
-            if len(self._df_signature_3d_margin) == 0:
-                logging.info("Generate signature df for margin mask.")
-                self._df_signature_3d_margin = self._generate_signature_3d(self._df_radiomics_3d_margin)
-            return self._df_signature_3d_margin
+    def df_signature_gt_3d(self):
+        if len(self._df_signature_gt_3d) == 0:
+            logging.info("Generate GT signature df for full mask.")
+            self._df_signature_gt_3d = self._generate_signature_3d(self._df_radiomics_gt_3d)
+        return self._df_signature_gt_3d
+
+    def df_signature_gt_margin_3d(self, thickness=1):
+        if len(self._df_signature_gt_3d_margin[thickness]) == 0:
+            logging.info("Generate GT signature df for margin mask.")
+            self._df_signature_gt_3d_margin[thickness] = self._generate_signature_3d(
+                self._df_radiomics_gt_3d_margin[thickness])
+        return self._df_signature_gt_3d_margin[thickness]
 
     @property
-    def dict_signature_2d(self):
-        return self._df_radiomics_2d
+    def dict_signature_gt_2d(self):
+        return self._df_radiomics_gt_2d
 
     @property
-    def df_total(self):
+    def df_radiomics_pred_2d(self):
+        return self._df_radiomics_pred_2d
+
+    @property
+    def df_total_evaluation(self):
         if len(self._df_total) == 0:
             logging.info("Generate total df.")
             # all slices
@@ -367,7 +392,7 @@ class TestSet:
         return self._df_total
 
     @property
-    def df_volume(self):
+    def df_volume_features(self):
         df_vol = self._df_volume
         if len(self._df_volume) == 0:
             df_vol = pd.DataFrame()
@@ -380,10 +405,21 @@ class TestSet:
         return df_vol
 
     @property
-    def df_features(self):
-        df_feature = pd.DataFrame()
-
-        return df_feature
+    def df_radiomics_pred_2d_flatten(self):
+        df_signature_pred = self._df_radiomics_pred_2d_flatten
+        if len(self._df_radiomics_pred_2d_flatten) == 0:
+            df_signature_pred = pd.DataFrame()
+            for idx, patient_id in enumerate(self.list_patient_ids):
+                df = self._df_radiomics_pred_2d[idx]
+                _df_radiomics_pred_2d_flatten = self._df_radiomics_pred_2d[idx]
+                for m in df.keys():
+                    for s in df[m].keys():
+                        for f in df[m][s].keys():
+                            _df_radiomics_pred_2d_flatten[m][s][f] = list(df[m][s][f].values())
+                df_signature_pred = df_signature_pred.append({"id": patient_id, "data": _df_radiomics_pred_2d_flatten},
+                                                             ignore_index=True)
+            self._df_radiomics_pred_2d_flatten = df_signature_pred
+        return df_signature_pred
 
     def __len__(self):
         return len(self._data_container_0_1)
@@ -393,19 +429,23 @@ if __name__ == "__main__":
     testset = TestSet("/tf/workdir/data/VS_segm/test_processed/", load=True,
                       data_load=True, evaluation_load=True, radiomics_load=True)
     start = time.time()
-    df_total = testset.df_total
+    df_total = testset.df_total_evaluation
     # df_total.to_json("/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/evaluation_all.json")
     print("df total", time.time() - start)
     start = time.time()
-    df_signature = testset.df_signature_3d
-    # df_signature.to_json("/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_all.json")
+    df_signature = testset.df_signature_gt_3d
+    # df_signature.to_json("/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_gt_3d_all.json")
     print("df signature", time.time() - start)
     start = time.time()
-    df_volume = testset.df_volume
-    # df_volume.to_json("/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/volumentric.json")
+    df_volume = testset.df_volume_features
+    # df_volume.to_json("/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/volumentric_all.json")
     print("df volume", time.time() - start)
     start = time.time()
-    testset.mask_mode = "margin_mask"
-    df_signature_mask = testset.df_signature_3d
-    # df_signature_mask.to_json("/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_all_margin.json")
+    for idx in range(1, 6):
+        df_signature_mask = testset.df_signature_gt_margin_3d(idx)
+        # df_signature_mask.to_json(f"/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_gt_margin{idx}_all.json")
     print("df signature margin", time.time() - start)
+    start = time.time()
+    df_feature_pred_flatten = testset.df_radiomics_pred_2d_flatten
+    #df_feature_pred_flatten.to_json("/tf/workdir/tu_vienna/VA_brain_tumor/data_utils/radiomics_pred_flatten_all.json")
+    print("df features radiomics flatten", time.time() - start)

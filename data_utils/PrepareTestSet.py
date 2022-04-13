@@ -222,160 +222,246 @@ def gan_cg_predict(model1, model2, img, gt):
     return res_proc, res2_proc, res_intermediate, d, sd
 
 
-if __name__ == "__main__":
+def do_data_transform():
+    path = f"{data_path}/test/"
+    folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
+    print("Transform data.")
+    start = time.time()
+    for f in folders:
+        if not os.path.exists(f.replace("test/", "test_processed/")):
+            os.mkdir(f.replace("test/", "test_processed/"))
+        # load data
+        container = DataTransformer(f, alpha=0, beta=1)
+        container2 = DataTransformer(f, alpha=-1, beta=1)
+        # transforms and store data
+        container.transform_and_store_data()
+        container2.transform_and_store_data()
+    print(f"Finish transform data in {time.time() - start} sec.")
 
-    check_gpu()
 
-    data_path = "/tf/workdir/data/VS_segm"
+def do_pred_evaluation():
+    path = f"{data_path}/test_processed/"
+    folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
+    print("Generate predictions of all models.")
+    start = time.time()
+    for f in folders:
+        # load data
+        container = DataContainer(f, alpha=0, beta=1)
+        t2_scan = np.moveaxis(container.t2_scan, 2, 0)
+        vs_segm = np.moveaxis(container.vs_segm, 2, 0)
+        vs_class = container.vs_class
+        container2 = DataContainer(f, alpha=-1, beta=1)
+        t2_scan2 = np.moveaxis(container2.t2_scan, 2, 0)
+        t1_scan2 = np.moveaxis(container2.t1_scan, 2, 0)
+        # store general information
+        df = pd.DataFrame(columns=["slice", "VS_segm_gt", "VS_class_gt"])
+        df["slice"] = list(range(len(container)))
+        df["VS_segm_gt"] = container.process_mask_to_contour(vs_segm)
+        df["VS_class_gt"] = vs_class
 
-    DO_DATA_TRANSFORM = False  # perform pre-processing (clip, resize, ...) and store Nifti files
-    DO_PRED_GENERATION = False  # generate predictions, extract error metrics and store prediction contour in json
-    DO_RADIOMICS_3D = False  # get 3D radiomics from original T2 and filled GT masks and store json file
-    DO_RADIOMICS_2D = False  # get 2D radiomics from original T2 and filled GT masks and store json file
-    DO_GT_CONTOUR_GENERATION = True  # generate GT contours with thickness 1 and 2 and store Nifti files
-    DO_GT_CONTOUR_RADIOMICS_3D = True  # get 3D radiomics from original T2 and contour GT masks and store json file
+        for name in MODELS_SIMPLE:
+            model = tf.keras.models.load_model(MODELS[name]["path"],
+                                               custom_objects=MODELS[name]["custom_objects"])
+            pred_segm = []
+            dice = []
+            surface_distance = []
+            for idx, img in enumerate(t2_scan):
+                gt = vs_segm[idx]
+                res_proc, dsc, assd = simple_predict(model, img, gt)
+                pred_segm.append(res_proc)
+                surface_distance.append(assd)
+                dice.append(dsc)
+            df[f"VS_segm_pred-{name}"] = container.process_mask_to_contour(pred_segm)
+            df[f"VS_segm_dice-{name}"] = dice
+            df[f"VS_segm_assd-{name}"] = surface_distance
+            df[f"VS_class_pred-{name}"] = [1 if np.sum(p) != 0 else 0 for p in pred_segm]
 
-    if DO_DATA_TRANSFORM:
-        path = f"{data_path}/test/"
-        folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
-        print("Transform data.")
-        start = time.time()
-        for f in folders:
-            if not os.path.exists(f.replace("test/", "test_processed/")):
-                os.mkdir(f.replace("test/", "test_processed/"))
-            # load data
-            container = DataTransformer(f, alpha=0, beta=1)
-            container2 = DataTransformer(f, alpha=-1, beta=1)
-            # transforms and store data
-            container.transform_and_store_data()
-            container2.transform_and_store_data()
-        print(f"Finish transform data in {time.time() - start} sec.")
+        for name in MODELS_CG:
+            model = tf.keras.models.load_model(MODELS[name]["path"],
+                                               custom_objects=MODELS[name]["custom_objects"])
+            pred_segm = []
+            pred_class_prob = []
+            dice = []
+            surface_distance = []
+            for idx, img in enumerate(t2_scan):
+                gt = vs_segm[idx]
+                res_proc, res2, dsc, assd = cg_predict(model, img, gt)
+                pred_segm.append(res_proc)
+                pred_class_prob.append(res2)
+                surface_distance.append(assd)
+                dice.append(dsc)
+            df[f"VS_segm_pred-{name}"] = container.process_mask_to_contour(pred_segm)
+            df[f"VS_segm_dice-{name}"] = dice
+            df[f"VS_segm_assd-{name}"] = surface_distance
+            df[f"VS_class_pred-{name}"] = [1 if np.sum(p) != 0 else 0 for p in pred_segm]
+            df[f"VS_class_pred_prob-{name}"] = pred_class_prob
 
-    if DO_PRED_GENERATION:
-        path = f"{data_path}/test_processed/"
-        folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
-        print("Generate predictions.")
-        start = time.time()
-        for f in folders:
-            # load data
-            container = DataContainer(f, alpha=0, beta=1)
-            t2_scan = np.moveaxis(container.t2_scan, 2, 0)
-            vs_segm = np.moveaxis(container.vs_segm, 2, 0)
-            vs_class = container.vs_class
-            container2 = DataContainer(f, alpha=-1, beta=1)
-            t2_scan2 = np.moveaxis(container2.t2_scan, 2, 0)
-            t1_scan2 = np.moveaxis(container2.t1_scan, 2, 0)
-            # store general information
-            df = pd.DataFrame(columns=["slice", "VS_segm_gt", "VS_class_gt"])
-            df["slice"] = list(range(len(container)))
-            df["VS_segm_gt"] = container.process_mask_to_contour(vs_segm)
-            df["VS_class_gt"] = vs_class
+        for name in MODELS_GAN:
+            model1 = tf.keras.models.load_model(MODELS[name]["path"],
+                                                custom_objects=MODELS[name]["custom_objects"])
+            model2 = tf.keras.models.load_model(MODELS["XNet_T1_relu"]["path"],
+                                                custom_objects=MODELS["XNet_T1_relu"]["custom_objects"])
+            pred_segm = []
+            dice = []
+            surface_distance = []
+            mse = []
+            for idx, img in enumerate(t2_scan2):
+                gt = vs_segm[idx]
+                res_proc, res_intermediate, dsc, assd = gan_predict(model1, model2, img, gt)
+                mse.append(tf.reduce_mean(tf.keras.losses.mean_squared_error(res_intermediate,
+                                                                             tf.expand_dims(t1_scan2[idx],
+                                                                                            -1))).numpy())
+                pred_segm.append(res_proc)
+                surface_distance.append(assd)
+                dice.append(dsc)
+            df[f"VS_segm_pred-{name}+XNet_T1_relu"] = container.process_mask_to_contour(pred_segm)
+            df[f"VS_segm_dice-{name}+XNet_T1_relu"] = dice
+            df[f"VS_segm_mse-{name}+XNet_T1_relu"] = mse
+            df[f"VS_segm_assd-{name}+XNet_T1_relu"] = surface_distance
+            df[f"VS_class_pred-{name}+XNet_T1_relu"] = [1 if np.sum(p) != 0 else 0 for p in pred_segm]
 
-            for name in MODELS_SIMPLE:
-                model = tf.keras.models.load_model(MODELS[name]["path"],
-                                                   custom_objects=MODELS[name]["custom_objects"])
-                pred_segm = []
-                dice = []
-                surface_distance = []
-                for idx, img in enumerate(t2_scan):
-                    gt = vs_segm[idx]
-                    res_proc, dsc, assd = simple_predict(model, img, gt)
-                    pred_segm.append(res_proc)
-                    surface_distance.append(assd)
-                    dice.append(dsc)
-                df[f"VS_segm_pred-{name}"] = container.process_mask_to_contour(pred_segm)
-                df[f"VS_segm_dice-{name}"] = dice
-                df[f"VS_segm_assd-{name}"] = surface_distance
-                df[f"VS_class_pred-{name}"] = [1 if np.sum(p) != 0 else 0 for p in pred_segm]
+        for name in MODELS_GAN:
+            model1 = tf.keras.models.load_model(MODELS[name]["path"],
+                                                custom_objects=MODELS[name]["custom_objects"])
+            model2 = tf.keras.models.load_model(MODELS["CG_XNet_T1_relu"]["path"],
+                                                custom_objects=MODELS["CG_XNet_T1_relu"]["custom_objects"])
+            pred_segm = []
+            dice = []
+            surface_distance = []
+            mse = []
+            pred_class_prob = []
+            for idx, img in enumerate(t2_scan2):
+                gt = vs_segm[idx]
+                res_proc, res2, res_intermediate, dsc, assd = gan_cg_predict(model1, model2, img, gt)
+                mse.append(tf.reduce_mean(tf.keras.losses.mean_squared_error(res_intermediate,
+                                                                             tf.expand_dims(t1_scan2[idx],
+                                                                                            -1))).numpy())
+                pred_segm.append(res_proc)
+                surface_distance.append(assd)
+                dice.append(dsc)
+                pred_class_prob.append(res2)
+            df[f"VS_segm_pred-{name}+CG_XNet_T1_relu"] = container.process_mask_to_contour(pred_segm)
+            df[f"VS_segm_dice-{name}+CG_XNet_T1_relu"] = dice
+            df[f"VS_segm_mse-{name}+CG_XNet_T1_relu"] = mse
+            df[f"VS_segm_assd-{name}+CG_XNet_T1_relu"] = surface_distance
+            df[f"VS_class_pred-{name}+CG_XNet_T1_relu"] = [1 if np.sum(p) != 0 else 0 for p in pred_segm]
+            df[f"VS_class_pred_prob-{name}+CG_XNet_T1_relu"] = pred_class_prob
 
-            for name in MODELS_CG:
-                model = tf.keras.models.load_model(MODELS[name]["path"],
-                                                   custom_objects=MODELS[name]["custom_objects"])
-                pred_segm = []
-                pred_class_prob = []
-                dice = []
-                surface_distance = []
-                for idx, img in enumerate(t2_scan):
-                    gt = vs_segm[idx]
-                    res_proc, res2, dsc, assd = cg_predict(model, img, gt)
-                    pred_segm.append(res_proc)
-                    pred_class_prob.append(res2)
-                    surface_distance.append(assd)
-                    dice.append(dsc)
-                df[f"VS_segm_pred-{name}"] = container.process_mask_to_contour(pred_segm)
-                df[f"VS_segm_dice-{name}"] = dice
-                df[f"VS_segm_assd-{name}"] = surface_distance
-                df[f"VS_class_pred-{name}"] = [1 if np.sum(p) != 0 else 0 for p in pred_segm]
-                df[f"VS_class_pred_prob-{name}"] = pred_class_prob
+        df.to_json(os.path.join(f, "evaluation.json"))
 
-            for name in MODELS_GAN:
-                model1 = tf.keras.models.load_model(MODELS[name]["path"],
-                                                    custom_objects=MODELS[name]["custom_objects"])
-                model2 = tf.keras.models.load_model(MODELS["XNet_T1_relu"]["path"],
-                                                    custom_objects=MODELS["XNet_T1_relu"]["custom_objects"])
-                pred_segm = []
-                dice = []
-                surface_distance = []
-                mse = []
-                for idx, img in enumerate(t2_scan2):
-                    gt = vs_segm[idx]
-                    res_proc, res_intermediate, dsc, assd = gan_predict(model1, model2, img, gt)
-                    mse.append(tf.reduce_mean(tf.keras.losses.mean_squared_error(res_intermediate,
-                                                                                 tf.expand_dims(t1_scan2[idx],
-                                                                                                -1))).numpy())
-                    pred_segm.append(res_proc)
-                    surface_distance.append(assd)
-                    dice.append(dsc)
-                df[f"VS_segm_pred-{name}+XNet_T1_relu"] = container.process_mask_to_contour(pred_segm)
-                df[f"VS_segm_dice-{name}+XNet_T1_relu"] = dice
-                df[f"VS_segm_mse-{name}+XNet_T1_relu"] = mse
-                df[f"VS_segm_assd-{name}+XNet_T1_relu"] = surface_distance
-                df[f"VS_class_pred-{name}+XNet_T1_relu"] = [1 if np.sum(p) != 0 else 0 for p in pred_segm]
+    print(f"Finish generate predictions in {time.time() - start} sec.")
 
-            for name in MODELS_GAN:
-                model1 = tf.keras.models.load_model(MODELS[name]["path"],
-                                                    custom_objects=MODELS[name]["custom_objects"])
-                model2 = tf.keras.models.load_model(MODELS["CG_XNet_T1_relu"]["path"],
-                                                    custom_objects=MODELS["CG_XNet_T1_relu"]["custom_objects"])
-                pred_segm = []
-                dice = []
-                surface_distance = []
-                mse = []
-                pred_class_prob = []
-                for idx, img in enumerate(t2_scan2):
-                    gt = vs_segm[idx]
-                    res_proc, res2, res_intermediate, dsc, assd = gan_cg_predict(model1, model2, img, gt)
-                    mse.append(tf.reduce_mean(tf.keras.losses.mean_squared_error(res_intermediate,
-                                                                                 tf.expand_dims(t1_scan2[idx],
-                                                                                                -1))).numpy())
-                    pred_segm.append(res_proc)
-                    surface_distance.append(assd)
-                    dice.append(dsc)
-                    pred_class_prob.append(res2)
-                df[f"VS_segm_pred-{name}+CG_XNet_T1_relu"] = container.process_mask_to_contour(pred_segm)
-                df[f"VS_segm_dice-{name}+CG_XNet_T1_relu"] = dice
-                df[f"VS_segm_mse-{name}+CG_XNet_T1_relu"] = mse
-                df[f"VS_segm_assd-{name}+CG_XNet_T1_relu"] = surface_distance
-                df[f"VS_class_pred-{name}+CG_XNet_T1_relu"] = [1 if np.sum(p) != 0 else 0 for p in pred_segm]
-                df[f"VS_class_pred_prob-{name}+CG_XNet_T1_relu"] = pred_class_prob
 
-            df.to_json(os.path.join(f, "evaluation.json"))
+def do_gt_radiomics_3d():
+    path = f"{data_path}/test_processed/"
+    folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
+    print("Extract 3D radiomics features from GT masks.")
+    # extract features
+    start = time.time()
+    settings = {'binWidth': 25, 'resampledPixelSpacing': None, 'interpolator': sitk.sitkBSpline}
+    extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
+    featureClasses = radiomics.getFeatureClasses()
+    featureClasses.pop("shape2D", "None")
+    for folder in folders:
+        imageName = os.path.join(folder, "vs_gk_t2_refT1_processed_0_1.nii")
+        maskName = os.path.join(folder, "vs_gk_struc1_refT1_processed.nii")
+        featureVectorProc = {}
+        try:
+            featureVector = extractor.execute(imageName, maskName)
+            tmp = {}
+            for idx, featureName in enumerate(featureVector.keys()):
+                if f"original_" in featureName and "-original_" not in featureName:
+                    tmp[featureName.split('_')[-1] + "-" + featureName.split('_')[-2]] = featureVector[
+                                                                                             featureName] * 1
+            for fc in featureClasses:
+                featureVectorProc[fc] = {k.split("-")[0]: str(v) for k, v in tmp.items() if fc in k}
+            with open(os.path.join(folder, "radiomics_gt_3d.json"), 'w') as outfile:
+                json.dump(featureVectorProc, outfile)
+        except RuntimeError as e:
+            print("error ", folder.split("/")[-1])
+    print(time.time() - start)
 
-        print(f"Finish generate predictions in {time.time() - start} sec.")
 
-    if DO_RADIOMICS_3D:
-        path = f"{data_path}]/test_processed/"
-        folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
-        print("Extract 3D radiomics features.")
-        # extract features
-        start = time.time()
-        settings = {'binWidth': 25, 'resampledPixelSpacing': None, 'interpolator': sitk.sitkBSpline}
-        extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
-        featureClasses = radiomics.getFeatureClasses()
-        featureClasses.pop("shape2D", "None")
-        for folder in folders:
-            imageName = os.path.join(folder, "vs_gk_t2_refT1_processed_0_1.nii")
-            maskName = os.path.join(folder, "vs_gk_struc1_refT1_processed.nii")
+def do_gt_radiomics_2d():
+    path = f"{data_path}/test_processed/"
+    folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
+    print("Extract 2D radiomics features from GT masks.")
+    # extract features
+    start = time.time()
+    settings = {'binWidth': 25, 'resampledPixelSpacing': None, 'interpolator': sitk.sitkBSpline}
+    extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
+    extractor.enableAllFeatures()
+    for folder in folders:
+        # generate tmp 2D data
+        tmp_folder = os.path.join(folder, "tmp")
+        if not os.path.isdir(tmp_folder):
+            os.mkdir(tmp_folder)
+        container = DataContainer(folder)
+        for slice_id in range(len(container)):
+            img = container.t2_scan_slice(slice_id)
+            segm = container.vs_segm_slice(slice_id)
+            fn_img = os.path.join(tmp_folder, f"t2_{slice_id}.nii")
+            fn_segm = os.path.join(tmp_folder, f"slice_{slice_id}.nii")
+            nib.save(nib.Nifti1Image(img, None), fn_img)
+            nib.save(nib.Nifti1Image(segm, None), fn_segm)
+        # generate 2D features
+        files = natsorted([os.path.join(tmp_folder, f) for f in os.listdir(tmp_folder) if "t2" in f])
+        featureVectorProcList = {}
+        for file in files:
+            imageName = file
+            maskName = file.replace("t2", "slice")
+            try:
+                featureVector = extractor.execute(imageName, maskName)
+                tmp = {}
+                featureVectorProc = {}
+                for idx, featureName in enumerate(featureVector.keys()):
+                    if f"original_" in featureName and "-original_" not in featureName:
+                        tmp[featureName.split('_')[-1] + "-" + featureName.split('_')[-2]] = featureVector[
+                                                                                                 featureName] * 1
+                featureClasses = radiomics.getFeatureClasses()
+                print(featureClasses)
+                for fc in featureClasses:
+                    featureVectorProc[fc] = {k.split("-")[0]: str(v) for k, v in tmp.items() if fc in k}
+                featureVectorProcList[file.split("_")[-1].split(".")[0]] = featureVectorProc
+            except ValueError:
+                continue
+        with open(os.path.join(folder, "radiomics_gt_2d.json"), 'w') as outfile:
+            json.dump(featureVectorProcList, outfile)
+        # remove tmp folder again
+        shutil.rmtree(tmp_folder)
+
+    print(time.time() - start)
+
+
+def do_gt_contour_generation():
+    path = f"{data_path}/test_processed/"
+    folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
+    print("Generate GT contour masks.")
+    start = time.time()
+    for folder in folders:
+        container = DataContainer(folder)
+        affine_matrix = container.affine_matrix()
+        df = pd.read_json(os.path.join(folder, "evaluation.json"))
+        for idx in range(1, 6):
+            segm_contour = container.process_contour_to_mask(list(df["VS_segm_gt"].values), thickness=idx)
+            nib.save(nib.Nifti1Image(segm_contour, affine_matrix), f"{folder}/vs_gk_struc1_refT1_contour{idx}")
+    print(time.time() - start)
+
+
+def do_gt_contour_radiomics_3d():
+    path = f"{data_path}/test_processed/"
+    folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
+    print("Extract 2D radiomics features from GT contour masks.")
+    start = time.time()
+    settings = {'binWidth': 25, 'resampledPixelSpacing': None, 'interpolator': sitk.sitkBSpline}
+    extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
+    featureClasses = radiomics.getFeatureClasses()
+    featureClasses.pop("shape2D", "None")
+    for folder in folders:
+        imageName = os.path.join(folder, "vs_gk_t2_refT1_processed_0_1.nii")
+        for thickness in range(1, 6):
+            print(f"thickness is {thickness}")
+            maskName = os.path.join(folder, f"vs_gk_struc1_refT1_contour{thickness}.nii")
             featureVectorProc = {}
             try:
                 featureVector = extractor.execute(imageName, maskName)
@@ -386,40 +472,48 @@ if __name__ == "__main__":
                                                                                                  featureName] * 1
                 for fc in featureClasses:
                     featureVectorProc[fc] = {k.split("-")[0]: str(v) for k, v in tmp.items() if fc in k}
-                with open(os.path.join(folder, "radiomics.json"), 'w') as outfile:
+                with open(os.path.join(folder, f"radiomics_gt_contour{thickness}.json"), 'w') as outfile:
                     json.dump(featureVectorProc, outfile)
             except RuntimeError as e:
                 print("error ", folder.split("/")[-1])
-        print(time.time() - start)
 
-    if DO_RADIOMICS_2D:
-        path = f"{data_path}/test_processed/"
-        folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
-        print("Extract 2D radiomics features.")
-        # extract features
-        start = time.time()
-        settings = {'binWidth': 25, 'resampledPixelSpacing': None, 'interpolator': sitk.sitkBSpline}
-        extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
-        extractor.enableAllFeatures()
-        for folder in folders:
-            # generate tmp 2D data
-            tmp_folder = os.path.join(folder, "tmp")
-            if not os.path.isdir(tmp_folder):
-                os.mkdir(tmp_folder)
-            container = DataContainer(folder)
-            for slice_id in range(len(container)):
-                img = container.t2_scan_slice(slice_id)
-                segm = container.vs_segm_slice(slice_id)
-                fn_img = os.path.join(tmp_folder, f"t2_{slice_id}.nii")
-                fn_segm = os.path.join(tmp_folder, f"slice_{slice_id}.nii")
-                nib.save(nib.Nifti1Image(img, None), fn_img)
-                nib.save(nib.Nifti1Image(segm, None), fn_segm)
-            # generate 2D features
-            files = natsorted([os.path.join(tmp_folder, f) for f in os.listdir(tmp_folder) if "t2" in f])
+    print(time.time() - start)
+
+
+def do_pred_radiomics_2d():
+    path = f"{data_path}/test_processed/"
+    folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
+    settings = {'binWidth': 25, 'resampledPixelSpacing': None, 'interpolator': sitk.sitkBSpline}
+    extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
+    extractor.enableAllFeatures()
+    featureClasses = radiomics.getFeatureClasses()
+    featureClasses.pop("shape", None)
+    print("Extract 2D radiomics features from prediction masks.")
+    start = time.time()
+    for folder in folders:
+        folder_tmp = os.path.join(folder, "tmp")
+        if not os.path.isdir(folder_tmp):
+            os.mkdir(folder_tmp)
+        container = DataContainer(folder)
+        affine_matrix = container.affine_matrix()
+        df = pd.read_json(os.path.join(folder, "evaluation.json"))
+        model_names = [c.split("-")[-1] for c in df.columns if "VS_segm_dice" in c]
+        radiomics_pred_2d = {}
+        for model_name in model_names:
+            # select non-empty slices
+            df_pos = df[df[f"VS_segm_pred-{model_name}"].apply(lambda x: len(x) != 0)]
+            # generate segmentation masks
+            segm_contour = container.process_contour_to_mask(list(df_pos[f"VS_segm_pred-{model_name}"].values),
+                                                             thickness=-1)
             featureVectorProcList = {}
-            for file in files:
-                imageName = file
-                maskName = file.replace("t2", "slice")
+            for idx, slice_id in enumerate(df_pos.index):
+                # write image
+                img = container.t2_scan_slice(idx)
+                imageName = f"{folder_tmp}/t2_{slice_id}.nii"
+                maskName = f"{folder_tmp}/{model_name}_{slice_id}.nii"
+                nib.save(nib.Nifti1Image(img, None), imageName)
+                nib.save(nib.Nifti1Image(segm_contour[..., idx], None), maskName)
+                # 2d radiomic features
                 try:
                     featureVector = extractor.execute(imageName, maskName)
                     tmp = {}
@@ -428,78 +522,54 @@ if __name__ == "__main__":
                         if f"original_" in featureName and "-original_" not in featureName:
                             tmp[featureName.split('_')[-1] + "-" + featureName.split('_')[-2]] = featureVector[
                                                                                                      featureName] * 1
-                    featureClasses = radiomics.getFeatureClasses()
                     for fc in featureClasses:
                         featureVectorProc[fc] = {k.split("-")[0]: str(v) for k, v in tmp.items() if fc in k}
-                    featureVectorProcList[file.split("_")[-1].split(".")[0]] = featureVectorProc
+                    featureVectorProcList[slice_id] = featureVectorProc
                 except ValueError:
                     continue
-            with open(os.path.join(folder, "radiomics_2d.json"), 'w') as outfile:
-                json.dump(featureVectorProcList, outfile)
-            # remove tmp folder again
-            shutil.rmtree(tmp_folder)
+            radiomics_pred_2d[model_name] = featureVectorProcList
+            with open(os.path.join(folder, "radiomics_pred_2d.json"), 'w') as outfile:
+                json.dump(radiomics_pred_2d, outfile)
+        shutil.rmtree(folder_tmp)
 
-        print(time.time() - start)
+    print(time.time() - start)
+
+
+if __name__ == "__main__":
+
+    check_gpu()
+
+    data_path = "/tf/workdir/data/VS_segm"
+
+    DO_DATA_TRANSFORM = False  # perform pre-processing (clip, resize, ...) and store Nifti files
+    DO_PRED_EVALUATION = False  # generate predictions, extract error metrics and store prediction contour in json
+    DO_GT_RADIOMICS_3D = False  # get 3D radiomics from original T2 and filled GT masks and store json file
+    DO_GT_RADIOMICS_2D = True  # get 2D radiomics from original T2 and filled GT masks and store json file
+    DO_GT_CONTOUR_GENERATION = False  # generate GT contours with thickness 1, 2, 3, 4, 5 and store Nifti files
+    DO_GT_CONTOUR_RADIOMICS_3D = False  # get 3D radiomics from original T2 and contour GT masks and store json file
+    #DO_PRED_RADIOMICS_3D = False  # get 3d radiomics from original T2 and filled prediction masks and store json file
+    DO_PRED_RADIOMICS_2D = False  # get 2d radiomics from original T2 and filled prediction masks and store json file
+
+    if DO_DATA_TRANSFORM:
+        do_data_transform()
+
+    if DO_PRED_EVALUATION:
+        do_pred_evaluation()
+
+    if DO_GT_RADIOMICS_3D:
+        do_gt_radiomics_3d()
+
+    if DO_GT_RADIOMICS_2D:
+        do_gt_radiomics_2d()
 
     if DO_GT_CONTOUR_GENERATION:
-        path = f"{data_path}/test_processed/"
-        folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
-        print("Generate GT contour masks.")
-        start = time.time()
-        for folder in folders:
-            container = DataContainer(folder)
-            affine_matrix = container.affine_matrix()
-            df = pd.read_json(os.path.join(folder, "evaluation.json"))
-            segm_contour = container.process_contour_to_mask(list(df["VS_segm_gt"].values), thickness=1)
-            nib.save(nib.Nifti1Image(segm_contour, affine_matrix), f"{folder}/vs_gk_struc1_refT1_contour1")
-            segm_contour = container.process_contour_to_mask(list(df["VS_segm_gt"].values), thickness=2)
-            nib.save(nib.Nifti1Image(segm_contour, affine_matrix), f"{folder}/vs_gk_struc1_refT1_contour2")
-
-        print(time.time() - start)
+        do_gt_contour_generation()
 
     if DO_GT_CONTOUR_RADIOMICS_3D:
-        path = f"{data_path}/test_processed/"
-        folders = natsorted([os.path.join(path, f) for f in os.listdir(path)])
-        print("Generate GT contour masks.")
-        start = time.time()
-        settings = {'binWidth': 25, 'resampledPixelSpacing': None, 'interpolator': sitk.sitkBSpline}
-        extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
-        featureClasses = radiomics.getFeatureClasses()
-        featureClasses.pop("shape2D", "None")
-        for folder in folders:
-            imageName = os.path.join(folder, "vs_gk_t2_refT1_processed_0_1.nii")
-            maskName = os.path.join(folder, "vs_gk_struc1_refT1_contour1.nii")
-            featureVectorProc = {}
-            try:
-                featureVector = extractor.execute(imageName, maskName)
-                tmp = {}
-                for idx, featureName in enumerate(featureVector.keys()):
-                    if f"original_" in featureName and "-original_" not in featureName:
-                        tmp[featureName.split('_')[-1] + "-" + featureName.split('_')[-2]] = featureVector[
-                                                                                                 featureName] * 1
-                for fc in featureClasses:
-                    featureVectorProc[fc] = {k.split("-")[0]: str(v) for k, v in tmp.items() if fc in k}
-                with open(os.path.join(folder, "radiomics_gt_contour1.json"), 'w') as outfile:
-                    json.dump(featureVectorProc, outfile)
-            except RuntimeError as e:
-                print("error ", folder.split("/")[-1])
+        do_gt_contour_radiomics_3d()
 
-            maskName = os.path.join(folder, "vs_gk_struc1_refT1_contour2.nii")
-            featureVectorProc = {}
-            try:
-                featureVector = extractor.execute(imageName, maskName)
-                tmp = {}
-                for idx, featureName in enumerate(featureVector.keys()):
-                    if f"original_" in featureName and "-original_" not in featureName:
-                        tmp[featureName.split('_')[-1] + "-" + featureName.split('_')[-2]] = featureVector[
-                                                                                                 featureName] * 1
-                for fc in featureClasses:
-                    featureVectorProc[fc] = {k.split("-")[0]: str(v) for k, v in tmp.items() if fc in k}
-                with open(os.path.join(folder, "radiomics_gt_contour2.json"), 'w') as outfile:
-                    json.dump(featureVectorProc, outfile)
-            except RuntimeError as e:
-                print("error ", folder.split("/")[-1])
+    if DO_PRED_RADIOMICS_2D:
+        do_pred_radiomics_2d()
 
-        print(time.time() - start)
 
 

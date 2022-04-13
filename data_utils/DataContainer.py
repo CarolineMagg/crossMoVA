@@ -149,13 +149,13 @@ class DataContainer:
         if type(contour) == list:
             if len(contour) > 0 and type(contour[0]) == list:
                 for i in range(len(contour)):
-                    m = cv2.drawContours(np.zeros((256, 256)),
-                                         [np.array(s).astype(np.int64) for s in contour[i]], -1, 1, 1)
+                    m = cv2.drawContours(np.zeros(shape),
+                                         [np.array(s).astype(np.int64) for s in contour[i]], -1, (1), thickness)
                     mask.append(m)
                 mask = np.moveaxis(np.asarray(mask), 0, -1)
             else:
-                m = cv2.drawContours(np.zeros((256, 256)),
-                                     [np.array(s).astype(np.int64) for s in contour], -1, 1, 1)
+                m = cv2.drawContours(np.zeros(shape),
+                                     [np.array(s).astype(np.int64) for s in contour], -1, (1), thickness)
                 mask.append(m)
                 mask = np.moveaxis(np.asarray(mask), 0, -1)
             mask = mask.astype(np.int16)
