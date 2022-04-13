@@ -7,6 +7,7 @@ import cv2
 import pandas as pd
 import numpy as np
 import dash
+import string
 from _plotly_utils.colors import n_colors
 from dash import dcc, Output, Input, State
 from dash import html
@@ -16,6 +17,7 @@ from dash_extensions import Keyboard
 import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.figure_factory as ff
+from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import confusion_matrix
 
 from application.default_figures import *
@@ -35,6 +37,7 @@ MODELS_GAN_XNET = ["GAN_1+XNet_T1_relu", "GAN_2+XNet_T1_relu", "GAN_5+XNet_T1_re
                    "GAN_1+CG_XNet_T1_relu", "GAN_2+CG_XNet_T1_relu", "GAN_5+CG_XNet_T1_relu"]
 MODELS_DA = [*MODELS_SEGMS2T, *MODELS_GAN_XNET]
 MODELS = [*MODELS_BASELINE, *MODELS_DA]
+MODELS_MAPPING = dict(zip(MODELS, list(string.ascii_uppercase)[0:len(MODELS)]))  # TODO: use mapping!
 MODELS_CG = [*MODELS_SIMPLE_CG,
              "CG_SegmS2T_GAN1_relu", "CG_SegmS2T_GAN2_relu", "CG_SegmS2T_GAN5_relu",
              "GAN_1+CG_XNet_T1_relu", "GAN_2+CG_XNet_T1_relu", "GAN_5+CG_XNet_T1_relu"]
@@ -62,14 +65,14 @@ load_data = html.Div(
                               'verticalAlign': 'middle'}),
               dcc.Store(id='df-total'),
               dcc.Store(id='df-signature'),
-              dcc.Store(id='df-volume')
+              dcc.Store(id='df-volume'),
               ],
     style={'width': '15%',
            'verticalAlign': 'middle',
            'display': 'inline-block'})
 header1 = html.Div(
     id='header-1',
-    children=html.H1(children='Domain Adaptation Segmentation Evaluation',
+    children=html.H1(children='Segmentation Prediction Evaluation',
                      style={'textAlign': 'center', 'width': '66%', 'color': 'white', 'verticalAlign': 'middle'}),
     style={'width': '70%', 'display': 'inline-block'})
 github_link = html.Div(
@@ -113,21 +116,6 @@ control_dataset_mask = html.Div(
                  style={'width': '15%',
                         'textAlign': 'left',
                         'display': 'table-cell'}),
-        html.Br(),
-        html.Div(children=html.Label("Mask:"),
-                 style={'width': '10%',
-                        'textAlign': 'right',
-                        'paddingRight': '1%',
-                        'display': 'table-cell'}),
-        html.Div(children=[dcc.RadioItems(id="radioitem-mask",
-                                          options=[{'label': 'full',
-                                                    'value': 'full_mask'},
-                                                   {'label': 'margin',
-                                                    'value': 'margin_mask'}],
-                                          value='full_mask')],
-                 style={'width': '15%',
-                        'textAlign': 'left',
-                        'display': 'table-cell'}),
         html.Div([Keyboard(id="shortcut-mask")])
     ],
     style={'width': '25%',
@@ -158,33 +146,7 @@ control_error_metric_dataset = html.Div(
                        style={'width': '35%',
                               'verticalAlign': 'middle',
                               'display': 'table-cell'}),
-              control_dataset_mask,
-              html.Div(children=html.Label("Features:"),
-                       style={'width': '10%',
-                              'textAlign': 'right',
-                              'paddingRight': '1%',
-                              'verticalAlign': 'middle',
-                              'display': 'table-cell'}),
-              html.Div(children=dcc.Dropdown(id='dropdown-feature',
-                                             options=[{'label': 'Shape',
-                                                       'value': 'shape'},
-                                                      {'label': 'Firstorder',
-                                                       'value': 'firstorder'},
-                                                      {'label': 'Performance',
-                                                       'value': 'performance'},
-                                                      {'label': 'Custom',
-                                                       'value': 'custom'}, ]
-                                             ),
-                       style={'width': '15%',
-                              'verticalAlign': 'middle',
-                              'display': 'table-cell'}),
-              html.Div(children=[html.Button(id='submit_theme', n_clicks=0, children="Theme",
-                                             style={'color': 'white', 'backgroundColor': 'darkgray'}),
-                                 dcc.Store('theme', data=json.dumps("gray"))],
-                       style={'width': '5%',
-                              'textAlign': 'center',
-                              'verticalAlign': 'middle',
-                              'display': 'table-cell'})],
+              control_dataset_mask],
     style={'display': 'table',
            'width': '97%'})
 control_model = html.Div(
@@ -329,6 +291,7 @@ control_panel = html.Div(
               dcc.Store(id='df-metric-detail'),
               dcc.Store(id='df-feature-overview'),
               dcc.Store(id='df-feature-detail'),
+              dcc.Store(id='dict-clusters-metrics'),
               dcc.Store(id='df-heatmap-overview-overlay'),
               dcc.Store(id='df-heatmap-detail-overlay'),
               dcc.Store(id='dict-bin-mapping'),
@@ -453,11 +416,99 @@ parcats_detail = html.Div(
                         figure=fig_no_data_selected)],
     style={'display': 'table-cell',
            'width': '50%'})
+parcats_control_general = html.Div(
+    children=[
+        html.Div(children=html.Label("Features:"),
+                 style={'width': '10%',
+                        'textAlign': 'left',
+                        'paddingRight': '1%',
+                        'paddingLeft': '1%',
+                        'verticalAlign': 'middle',
+                        'display': 'table-cell'}),
+        html.Div(children=dcc.Dropdown(id='dropdown-feature',
+                                       options=[{'label': 'Shape',
+                                                 'value': 'shape'},
+                                                {'label': 'Firstorder',
+                                                 'value': 'firstorder'},
+                                                {'label': 'Performance',
+                                                 'value': 'performance'},
+                                                {'label': 'Custom',
+                                                 'value': 'custom'}, ],
+                                       value="custom"
+                                       ),
+                 style={'width': '35%',
+                        'textAlign': 'left',
+                        'verticalAlign': 'middle',
+                        'display': 'table-cell'}),
+        html.Div(children=[html.Button(id='submit_theme', n_clicks=0, children="Theme",
+                                       style={'color': 'white', 'backgroundColor': 'darkgray'}),
+                           dcc.Store('theme', data=json.dumps("gray"))],
+                 style={'width': '5%',
+                        'textAlign': 'center',
+                        'verticalAlign': 'middle',
+                        'display': 'table-cell'})],
+    style={'width': '50%',
+           'verticalAlign': 'middle',
+           'display': 'table-cell'})
+parcats_control_pcd = html.Div(
+    children=[
+        html.Div(children=html.Label("PCD-Type (Slice):"),
+                 style={'width': '15%',
+                        'textAlign': 'left',
+                        'paddingLeft': '1%',
+                        'verticalAlign': 'middle',
+                        'display': 'table-cell'}),
+        html.Div(children=dcc.Dropdown(id='dropdown-pcd-cluster',
+                                       options=[{'label': 'Slice',
+                                                 'value': 'slice_pcd'},
+                                                {'label': 'Model',
+                                                 'value': 'model_pcd'}],
+                                       value="slice_pcd"
+                                       ),
+                 style={'width': '20%',
+                        'verticalAlign': 'middle',
+                        'display': 'table-cell'}),
+        html.Div(children=html.Label("Number of Clusters:", id="dropdown-pcd-label"),
+                 style={'width': '15%',
+                        'textAlign': 'left',
+                        'paddingLeft': '1%',
+                        'verticalAlign': 'middle',
+                        'display': 'table-cell'}),
+        html.Div(children=dcc.Dropdown(id='dropdown-pcd-type',
+                                       options=[{'label': '2',
+                                                 'value': '2'},
+                                                {'label': '3',
+                                                 'value': '3'},
+                                                {'label': '4',
+                                                 'value': '4'},
+                                                {'label': '5',
+                                                 'value': '5'}
+                                                ],
+                                       value=3
+                                       ),
+                 style={'width': '5%',
+                        'verticalAlign': 'middle',
+                        'display': 'table-cell'}),
+        html.Div(style={'width': '1%',
+                        'display': 'table-cell'})
+    ],
+    style={'width': '50%',
+           'paddingLeft': '1%',
+           'display': 'table-cell'})
+parcats_control = html.Div(
+    children=[parcats_control_general,
+              parcats_control_pcd],
+    style={'width': '100%',
+           'backgroundColor': 'grey',
+           'border-width': '2px 1px 2px 2px', 'border-color': 'black', 'border-style': 'solid',
+           'display': 'table',
+           'verticalAlign': 'middle',
+           'textAlign': 'center'}
+)
 
 second_row = html.Div(
     id='parallel-set-plots',
     style={'width': '100%',
-           'padding-top': '0.5%',
            'display': 'table',
            'backgroundColor': 'grey'},
     children=[parcats_overview,
@@ -477,9 +528,11 @@ app.layout = html.Div(
               control_panel,
               sub_headers,
               first_row,
+              parcats_control,
               second_row,
               third_row],
     style={'height': '100%',
+           'width': '100%',
            'display': 'inline-block'})
 
 
@@ -536,13 +589,16 @@ def get_selected_model_list(models):
     Output('loading-data-output', "children"),
     Output('df-total', "data"),
     Output('df-volume', "data"),
-    Input('load_data', "n_clicks"))
+    Output('df-signature', "data"),
+    Input('load_data', "n_clicks")
+)
 def load_data_spinner(n_clicks):
     testset = TestSet(DATA_PATH, load=True,
                       data_load=False, evaluation_load=False, radiomics_load=False)
-    df_total = testset.df_total
-    df_volume = testset.df_volume
-    return "Data is loaded.", df_total.to_json(), df_volume.to_json()
+    df_total = testset.df_total_evaluation
+    df_volume = testset.df_volume_features
+    df_signature = testset.df_signature_gt_3d
+    return "Data is loaded.", df_total.to_json(), df_volume.to_json(), df_signature.to_json()
 
 
 @app.callback(
@@ -646,26 +702,26 @@ def update_data_overview(json_df_total, json_selected_models, selected_metric, s
         return df_metric.to_json(), selected_dataset
 
 
-@app.callback(
-    Output('df-signature', "data"),
-    Output('radioitem-mask', "value"),
-    Input('radioitem-mask', "value"),
-    Input('shortcut-mask', "n_keydowns"),
-    State('shortcut-mask', "keydown")
-)
-def update_mask_signature(mask_mode, n_keys, keys):
-    testset = TestSet(DATA_PATH, load=True,
-                      data_load=False, evaluation_load=False, radiomics_load=False, full_mask=True)
-    if mask_mode == "margin_mask":
-        testset.mask_mode = False
-    if keys is not None:
-        if keys['key'] == 'm':
-            if mask_mode == "margin_mask":
-                mask_mode = "full_mask"
-            else:
-                mask_mode = "margin_mask"
-    df_signature = testset.df_signature_3d
-    return df_signature.to_json(), mask_mode
+# @app.callback(
+#     Output('df-signature', "data"),
+#     Output('radioitem-mask', "value"),
+#     Input('radioitem-mask', "value"),
+#     Input('shortcut-mask', "n_keydowns"),
+#     State('shortcut-mask', "keydown")
+# )
+# def update_mask_signature(mask_mode, n_keys, keys):
+#     testset = TestSet(DATA_PATH, load=True,
+#                       data_load=False, evaluation_load=False, radiomics_load=False, full_mask=True)
+#     if mask_mode == "margin_mask":
+#         testset.mask_mode = False
+#     if keys is not None:
+#         if keys['key'] == 'm':
+#             if mask_mode == "margin_mask":
+#                 mask_mode = "full_mask"
+#             else:
+#                 mask_mode = "margin_mask"
+#     df_signature = testset.df_signature_3d
+#     return df_signature.to_json(), mask_mode
 
 
 @app.callback(
@@ -768,7 +824,8 @@ def update_heatmap_overview(json_df_metric, slider_values, slider_max, json_df_o
         fig = make_subplots(rows=2, cols=1,
                             row_heights=[0.1, 0.9], vertical_spacing=0.05, shared_xaxes=True)
         # create annotated heatmap with total values
-        round_dec = 2 if len(df_metric.columns) >= 11 else 3
+        round_dec = 1 if len(df_metric.columns) >= 15 else 2
+        round_dec = round_dec if len(df_metric.columns) >= 11 else 3
         round_dec = round_dec if len(df_metric.columns) >= 7 else 4
         trace = ff.create_annotated_heatmap(x=list(df_metric.columns)[1:],
                                             y=["mean"],
@@ -940,8 +997,10 @@ def update_data_detail(json_patient_id, json_selected_models, selected_metric, s
     Output('df-heatmap-detail-overlay', "data"),
     Input('df-metric-detail', "data"),
     Input('df-feature-detail', "data"),
-    Input('parcats-detail', "hoverData"))
-def update_heatmap_detail_overlay(json_df_metric, json_df_features, selected_ids_hover):
+    Input('parcats-detail', "hoverData"),
+    Input('slice-slider', "value")
+)
+def update_heatmap_detail_overlay(json_df_metric, json_df_features, selected_ids_hover, current_slice):
     ctx = dash.callback_context
     if selected_ids_hover is not None and 'parcats-detail.hoverData' in ctx.triggered[0]["prop_id"]:
         df_metric = pd.read_json(json_df_metric)
@@ -951,12 +1010,21 @@ def update_heatmap_detail_overlay(json_df_metric, json_df_features, selected_ids
         pointNumbers = []
         for p in list_of_points:
             pointNumbers.append(p["pointNumber"])
-        selected_ids = df_features["id"][pointNumbers].values.tolist()
-        idx_selected = [int(idx) for idx, row in df_metric.iterrows() if row["slice"] not in selected_ids][:-1]
-        idx_selected2 = [int(idx) for idx, row in df_metric.iterrows() if row["slice"] in selected_ids] + [
-            len(df_metric) - 1]
-        df_metric2.iloc[idx_selected, 1:] = 1
-        df_metric2.iloc[idx_selected2, 1:] = np.NaN
+        if "id" in df_features.columns:
+            selected_ids = df_features["id"][pointNumbers].values.tolist()
+            idx_selected = [int(idx) for idx, row in df_metric.iterrows() if row["slice"] not in selected_ids][:-1]
+            idx_selected2 = [int(idx) for idx, row in df_metric.iterrows() if row["slice"] in selected_ids] + [
+                len(df_metric) - 1]
+            df_metric2.iloc[idx_selected, 1:] = 1
+            df_metric2.iloc[idx_selected2, 1:] = np.NaN
+        elif "model" in df_features.columns:
+            selected_ids = df_features["model"][pointNumbers].values.tolist()
+            idx_selected = [c for c in df_metric.columns if c not in selected_ids + ["slice"]]
+            idx_selected2 = [c for c in df_metric.columns if c in selected_ids]
+            idx = np.where(df_metric["slice"].values == current_slice)[0][0]
+            df_metric2[idx_selected2] = 1
+            df_metric2.iloc[idx, 1:] = np.NaN
+            df_metric2[idx_selected] = 1
         return df_metric2.to_json()
     else:
         pd.DataFrame().to_json()
@@ -1030,16 +1098,21 @@ def update_heatmap_detail(df_metric_json, slider_values, slider_max, json_df_ove
             pointNumbers = []
             for p in list_of_points:
                 pointNumbers.append(p["pointNumber"])
-            selected_ids = [str(x) for x in df_features["id"][pointNumbers].values.tolist()]
-            idx_selected = [int(idx) for idx, row in df_metric.iterrows() if str(row["slice"]) in selected_ids] + [
-                len(df_metric) - 1]
-            df_metric = df_metric.iloc[idx_selected, :]
+            if "id" in df_features.columns:
+                selected_ids = [str(x) for x in df_features["id"][pointNumbers].values.tolist()]
+                idx_selected = [int(idx) for idx, row in df_metric.iterrows() if str(row["slice"]) in selected_ids] + [
+                    len(df_metric) - 1]
+                df_metric = df_metric.iloc[idx_selected, :]
+            if "model" in df_features.columns:
+                selected_ids = ["slice"] + df_features["model"][pointNumbers].values.tolist()
+                df_metric = df_metric[selected_ids]
 
         # create figure
         fig = make_subplots(rows=2, cols=1,
                             row_heights=[0.1, 0.9], vertical_spacing=0.05, shared_xaxes=True)
         # create annotated heatmap with total values
-        round_dec = 2 if len(df_metric.columns) >= 11 else 3
+        round_dec = 1 if len(df_metric.columns) >= 15 else 2
+        round_dec = round_dec if len(df_metric.columns) >= 11 else 3
         round_dec = round_dec if len(df_metric.columns) >= 7 else 4
         trace = ff.create_annotated_heatmap(x=list(df_metric.columns)[1:],
                                             y=["mean"],
@@ -1098,18 +1171,32 @@ def update_heatmap_detail(df_metric_json, slider_values, slider_max, json_df_ove
     Output('dict-slice-data', "data"),
     Input('dict-patient-id', "data"),
     Input('slice-slider', "value"),
-    Input('json-selected-models', "data"))
-def update_data_slice(json_patient_id, slice_id, json_selected_models):
-    if json_patient_id is None or slice_id is None or json_selected_models is None:
+    Input('json-selected-models', "data"),
+    Input('df-feature-detail', "data"),
+    Input('clickdata-parcats-detail', "data")
+)
+def update_data_slice(json_patient_id, slice_id, json_selected_models, json_df_features, selected_ids):
+    if json_patient_id is None or slice_id is None or json_selected_models is None or json_df_features is None:
         raise PreventUpdate
     else:
         patient_id = int(json.loads(json_patient_id))
         slice = slice_id
-        selected_models = json.loads(json_selected_models)
-        if selected_models is not None and len(selected_models) == 0:
-            return json.dumps({})
-        if selected_models is None:
-            selected_models = MODELS
+
+        selected_ids = json.loads(selected_ids)
+        df_features = pd.read_json(json_df_features)
+        if selected_ids is not None and df_features is not None and "model" in df_features.keys():
+            list_of_points = selected_ids["points"]
+            pointNumbers = []
+            for p in list_of_points:
+                pointNumbers.append(p["pointNumber"])
+            selected_models = df_features["model"][pointNumbers].values.tolist()
+        else:
+            selected_models = json.loads(json_selected_models)
+            if selected_models is not None and len(selected_models) == 0:
+                return json.dumps({})
+            if selected_models is None:
+                selected_models = MODELS
+
         df = pd.read_json(f"{DATA_PATH}/vs_gk_{patient_id}/evaluation.json")
         container = DataContainer(f"{DATA_PATH}/vs_gk_{patient_id}/")
         img = container.t2_scan_slice(slice)
@@ -1314,6 +1401,39 @@ def update_data_parcats_overview(df_total_json, df_signature_json, df_volume_jso
         return df_merged.to_json(), json.dumps(dict_performance_bins)
 
 
+@app.callback(
+    Output("dropdown-pcd-label", "style"),
+    Output("dropdown-pcd-type", "style"),
+    Input("dropdown-pcd-cluster", "value")
+)
+def update_pcd_type(pcd_type):
+    if pcd_type is None:
+        raise PreventUpdate
+    else:
+        if pcd_type == "slice_pcd":
+            style1 = {'width': '15%',
+                      'textAlign': 'left',
+                      'paddingLeft': '1%',
+                      'verticalAlign': 'middle',
+                      'display': 'none'}
+            style2 = {'width': '15%',  # TODO adapt width
+                      'paddingRight': '1%',
+                      'verticalAlign': 'middle',
+                      'display': 'none'}
+            return style1, style2
+        elif pcd_type == "model_pcd":
+            style1 = {'width': '15%',
+                      'textAlign': 'left',
+                      'paddingLeft': '1%',
+                      'verticalAlign': 'middle',
+                      'display': 'table-cell'}
+            style2 = {'width': '15%',  # TODO adapt width
+                      'paddingRight': '1%',
+                      'verticalAlign': 'middle',
+                      'display': 'table-cell'}
+            return style1, style2
+
+
 def get_feature_lookup_table(features, metric, dataset, type_level):
     feature_list = []
     if features == "firstorder":
@@ -1328,7 +1448,7 @@ def get_feature_lookup_table(features, metric, dataset, type_level):
     elif features == "performance":
         if type_level == "overview":
             feature_list = ['dice_all', 'dice_only_tumor', 'assd_all', 'assd_only_tumor',
-                            'acc_all', 'acc_only_tumor', 'tnr_all', 'tpr_all']  # 'tpr_only_tumor']
+                            'acc_all', 'acc_only_tumor', 'tnr_all', 'tpr_all']
         else:
             feature_list = ['dice_all', 'dice_only_tumor', 'assd_all', 'assd_only_tumor']
         feature_list.remove(str(metric + "_" + dataset))
@@ -1439,6 +1559,25 @@ def get_lookup_dict_detail(bin_mapping, bin_mapping_size):
                            label="Size(px)")}
 
 
+def get_lookup_dict_detail_2():
+    return {
+        # firstorder
+        "Energy": dict(ticktext=['large', 'medium', 'small', 'absent'], categoryarray=[3, 2, 1, 0]),
+        "Variance": dict(ticktext=['large', 'medium', 'small', 'absent'], categoryarray=[3, 2, 1, 0]),
+        "Skewness": dict(ticktext=['pos', 'neg', 'absent'], categoryarray=[2, 1, 0]),
+        "Kurtosis": dict(ticktext=['lepto', 'platy', 'absent'], categoryarray=[2, 1, 0]),
+        "Range": dict(ticktext=['large', 'medium', 'small', 'absent'], categoryarray=[3, 2, 1, 0]),
+        "MeanAbsoluteDeviation": dict(ticktext=['large', 'medium', 'small', 'absent'], categoryarray=[3, 2, 1, 0],
+                                      label="MAD"),
+        # shape2D
+        "MeshSurface": dict(ticktext=['large', 'medium', 'small', 'absent'], categoryarray=[3, 2, 1, 0]),
+        "Sphericity": dict(ticktext=['>mean', '<=mean', 'absent'], categoryarray=[2, 1, 0]),
+        "Elongation": dict(ticktext=['>mean', '<=mean', 'absent'], categoryarray=[2, 1, 0]),
+        "MaximumDiameter": dict(ticktext=['large', 'medium', 'small', 'absent'], categoryarray=[3, 2, 1, 0],
+                                label="Max2DDiam")
+    }
+
+
 @app.callback(
     Output('parcats-overview', "figure"),
     Input('df-feature-overview', "data"),
@@ -1446,7 +1585,8 @@ def get_lookup_dict_detail(bin_mapping, bin_mapping_size):
     Input('dropdown-error-metric', "value"),
     Input('radioitem-dataset', "value"),
     Input('dropdown-feature', "value"),
-    Input('theme', 'data'))
+    Input('theme', 'data')
+)
 def update_parcats_overview(df_plot_json, dict_bin_mapping, selected_metric, selected_dataset, selected_features,
                             theme):
     if df_plot_json is None or selected_metric is None or selected_dataset is None:
@@ -1507,109 +1647,188 @@ def update_parcats_overview(df_plot_json, dict_bin_mapping, selected_metric, sel
     Output('df-feature-detail', "data"),
     Output('dict-bin-mapping2', "data"),
     Output('dict-bin-mapping3', "data"),
+    Output('dict-clusters-metrics', "data"),
     Input('dict-patient-id', "data"),
-    Input('json-selected-models', "data"))
-def update_data_parcats_detail(json_patient_id, json_selected_models):
+    Input('json-selected-models', "data"),
+    Input('dropdown-pcd-cluster', "value"),
+    Input('dropdown-pcd-type', "value"),
+    Input('dropdown-feature', "value"),
+    Input('slice-slider', "value"),
+    Input('df-metric-detail', "data")
+)
+def update_data_parcats_detail(json_patient_id, json_selected_models, pcd_type, number_clusters, selected_features,
+                               current_slice, json_metric):
     if json_patient_id is None:
         raise PreventUpdate
     else:
         patient_id = json.loads(json_patient_id)
+        number_clusters = int(number_clusters)
         # performance features
-        df_total = pd.read_json(
-            f"{DATA_PATH}/vs_gk_{patient_id}/evaluation.json")
         selected_models = json.loads(json_selected_models)
         if selected_models is None or len(selected_models) == 0:
             return pd.DataFrame().to_json(), json.dumps({})
-        df_performance = pd.DataFrame()
-        values = [3, 2, 1]
-        values_ascending = dict(enumerate(values, 1))
-        values_descending = dict(enumerate(reversed(values), 1))
-        dict_performance_bins = {}
-        df_performance["id"] = [str(idx) for idx in range(len(df_total))]
-        for d in ["only_tumor", "all"]:
-            for m in ["dice", "assd"]:
-                df_tmp = pd.DataFrame()
-                for model in selected_models:
-                    df_tmp[m + '_' + model] = df_total[f"VS_segm_{m}-{model}"]
-                df_performance[m + '_' + d] = df_tmp.mean(axis=1).values
-                bins = np.linspace(np.min(df_performance[m + '_' + d]),
-                                   np.nextafter(np.max(df_performance[m + '_' + d]), np.inf), 4)
-                if "assd" in m:
-                    df_performance[m + '_' + d] = np.vectorize(values_descending.get)(
-                        np.digitize(df_performance[m + '_' + d], bins=bins))
+        if pcd_type == "model_pcd":
+            df = pd.read_json(f"{DATA_PATH}/vs_gk_{patient_id}/radiomics_pred_2d.json")
+            if selected_features == "firstorder":
+                feat_list = ["Energy", "Skewness", "Kurtosis", "Variance", "Range", "MeanAbsoluteDeviation"]
+            elif selected_features == "shape":
+                feat_list = ["MeshSurface", "Sphericity", "Elongation", "MaximumDiameter"]
+                selected_features = "shape2D"
+            else:
+                return pd.DataFrame(index=[0], columns=["use other feature"]).to_json(), None, None, None
+
+            X = {}
+            model_names = []
+            for m in df.keys():
+                if m in selected_models:
+                    x = []
+                    if current_slice in df[m].keys():
+                        if type(df[m][current_slice]) == float and np.isnan(df[m][current_slice]):
+                            continue
+                        [x.append(float(df[m][current_slice][selected_features][f])) for f in feat_list]
+                        model_names.append(m)
+                        X[m] = x
+            try:
+                clustering = AgglomerativeClustering(n_clusters=number_clusters)
+                y = clustering.fit_predict(list(X.values()))
+                clusters = dict(zip(model_names, y))
+            except ValueError as e:
+                return pd.DataFrame(index=[0], columns=["cluster number invalid"]).to_json(), None, None, None
+
+            df_merged = pd.DataFrame()
+            for m in model_names:
+                m_dict = {"model": m,
+                          "cluster": int(clusters[m])}
+                if current_slice in df[m].keys():
+                    m_dict.update({f: df[m][current_slice][selected_features][f] for f in feat_list})
                 else:
-                    df_performance[m + '_' + d] = np.vectorize(values_ascending.get)(
-                        np.digitize(df_performance[m + '_' + d], bins=bins))
-                if m + "_" + d not in dict_performance_bins.keys():
-                    dict_performance_bins[m + "_" + d] = bins.tolist()
-        # radiomics features
-        with open(
-                f"{DATA_PATH}/vs_gk_{patient_id}/radiomics_2d.json") as json_file:
-            df_rad = json.load(json_file)
-        df_radiomics = {"id": list(df_rad.keys())}
-        feature_classes = list(df_rad[list(df_rad.keys())[0]].keys())
-        feature_classes.remove("shape2D")
-        for cl in feature_classes:
-            cl_dict = {}
-            for key in df_rad.keys():
-                cl_dict[key] = df_rad[str(key)][cl]
-            tmp = {}
-            for idx, d in cl_dict.items():
-                for f, vals in d.items():
-                    if f in tmp.keys():
-                        tmp[f] = tmp[f] + [vals]
+                    continue
+                df_merged = df_merged.append(m_dict, ignore_index=True)
+            df_merged = df_merged[["model", "cluster"] + feat_list]
+
+            for fc in feat_list:
+                vals = [float(v) for v in df_merged[fc].values.tolist()]
+                if fc == "Skewness":
+                    df_merged[f"{fc}"] = [1 if a <= 0 else 2 for a in vals]
+                elif fc == "Kurtosis":
+                    df_merged[f"{fc}"] = [1 if a <= 3 else 2 for a in vals]
+                elif fc == "Elongation":
+                    df_merged[f"{fc}"] = [1 if a <= np.mean(vals) else 2 for a in vals]
+                elif fc == "Flatness":
+                    df_merged[f"{fc}"] = [1 if a <= 0.5 else 2 for a in vals]
+                elif fc == "Sphericity":
+                    df_merged[f"{fc}"] = [1 if a <= np.mean(vals) else 2 for a in vals]
+                else:
+                    df_merged[f"{fc}"] = np.digitize(vals, bins=np.linspace(np.min(vals),
+                                                                            np.nextafter(np.max(vals), np.inf),
+                                                                            4))
+            dict_performance_bins = {}
+            dict_size_bins = {}
+
+            # create averaged metric per cluster for order of clusters
+            df_metric = pd.read_json(json_metric)
+            clusters_metric = dict((k, []) for k in range(number_clusters))
+            t = df_metric[df_metric["slice"] == int(current_slice)].iloc[0]
+            for k, v in t.iteritems():
+                if k in clusters.keys():
+                    clusters_metric[clusters[k]].append(v)
+            clusters_metric_avg = dict(zip(clusters_metric.keys(), [np.average(v) for v in clusters_metric.values()]))
+        else:
+            df_total = pd.read_json(
+                f"{DATA_PATH}/vs_gk_{patient_id}/evaluation.json")
+            df_performance = pd.DataFrame()
+            values = [3, 2, 1]
+            values_ascending = dict(enumerate(values, 1))
+            values_descending = dict(enumerate(reversed(values), 1))
+            dict_performance_bins = {}
+            df_performance["id"] = [str(idx) for idx in range(len(df_total))]
+            for d in ["only_tumor", "all"]:
+                for m in ["dice", "assd"]:
+                    df_tmp = pd.DataFrame()
+                    for model in selected_models:
+                        df_tmp[m + '_' + model] = df_total[f"VS_segm_{m}-{model}"]
+                    df_performance[m + '_' + d] = df_tmp.mean(axis=1).values
+                    bins = np.linspace(np.min(df_performance[m + '_' + d]),
+                                       np.nextafter(np.max(df_performance[m + '_' + d]), np.inf), 4)
+                    if "assd" in m:
+                        df_performance[m + '_' + d] = np.vectorize(values_descending.get)(
+                            np.digitize(df_performance[m + '_' + d], bins=bins))
                     else:
-                        tmp[f] = [vals]
-            df_radiomics[cl] = tmp
-        df_sign = pd.DataFrame(columns=["id"])
-        df_sign["id"] = df_radiomics["id"]
-        for fc in feature_classes:
-            for key, vals in df_radiomics[fc].items():
-                vals = [float(v) for v in vals]
-                if key == "Skewness":
-                    df_sign[f"{fc}-{key}"] = [1 if a <= 0 else 2 for a in vals]
-                elif key == "Kurtosis":
-                    df_sign[f"{fc}-{key}"] = [1 if a <= 3 else 2 for a in vals]
-                elif key == "Elongation":
-                    df_sign[f"{fc}-{key}"] = [1 if a <= np.mean(vals) else 2 for a in vals]
-                elif key == "Flatness":
-                    df_sign[f"{fc}-{key}"] = [1 if a <= 0.5 else 2 for a in vals]
-                elif key == "Sphericity":
-                    df_sign[f"{fc}-{key}"] = [1 if a <= np.mean(vals) else 2 for a in vals]
-                else:
-                    df_sign[f"{fc}-{key}"] = np.digitize(vals, bins=np.linspace(np.min(vals),
-                                                                                np.nextafter(np.max(vals), np.inf),
-                                                                                4))
-        # volume features
-        df_volume = pd.DataFrame()
-        df = pd.read_json(f"{DATA_PATH}/vs_gk_{patient_id}/evaluation.json")
-        for idx, row in df.iterrows():
-            df_volume = df_volume.append({"id": str(row["slice"]),
-                                          "tumor_presence": row["VS_class_gt"],
-                                          "tumor_size_px": np.count_nonzero(cv2.drawContours(np.zeros((256, 256)),
-                                                                                             [np.array(s).astype(
-                                                                                                 np.int64) for s in
-                                                                                                 np.array(
-                                                                                                     row["VS_segm_gt"],
-                                                                                                     dtype="object")],
-                                                                                             -1,
-                                                                                             (1),
-                                                                                             -1))},
-                                         ignore_index=True)
-        bins = np.linspace(np.min(df_volume[df_volume["tumor_size_px"] >= 1]["tumor_size_px"]),
-                           np.nextafter(np.max(df_volume[df_volume["tumor_presence"] >= 1]["tumor_size_px"]), np.inf),
-                           4)
-        res = [0] * len(df_volume)
-        res[np.where(df_volume["tumor_presence"] == 1)[0][0]:np.where(df_volume["tumor_presence"] == 1)[0][
-                                                                 -1] + 1] = np.digitize(
-            df_volume[df_volume["tumor_presence"] == 1]["tumor_size_px"], bins=bins)
-        dict_size_bins = {"tumor_size": bins.tolist()}
-        df_volume["tumor_size"] = np.array(res)
-        df_volume["tumor_presence"] = df_volume["tumor_presence"].apply(lambda x: x + 1)
-        # merge features
-        df_merged = df_volume.merge(df_performance.merge(df_sign, on="id", how="left"), on="id", how="left")
-        df_merged = df_merged.fillna(value=0)
-        return df_merged.to_json(), json.dumps(dict_performance_bins), json.dumps(dict_size_bins)
+                        df_performance[m + '_' + d] = np.vectorize(values_ascending.get)(
+                            np.digitize(df_performance[m + '_' + d], bins=bins))
+                    if m + "_" + d not in dict_performance_bins.keys():
+                        dict_performance_bins[m + "_" + d] = bins.tolist()
+            # radiomics features
+            with open(
+                    f"{DATA_PATH}/vs_gk_{patient_id}/radiomics_gt_2d.json") as json_file:
+                df_rad = json.load(json_file)
+            df_radiomics = {"id": list(df_rad.keys())}
+            feature_classes = list(df_rad[list(df_rad.keys())[0]].keys())
+            for cl in feature_classes:
+                cl_dict = {}
+                for key in df_rad.keys():
+                    cl_dict[key] = df_rad[str(key)][cl]
+                tmp = {}
+                for idx, d in cl_dict.items():
+                    for f, vals in d.items():
+                        if f in tmp.keys():
+                            tmp[f] = tmp[f] + [vals]
+                        else:
+                            tmp[f] = [vals]
+                df_radiomics[cl] = tmp
+            df_sign = pd.DataFrame(columns=["id"])
+            df_sign["id"] = df_radiomics["id"]
+            for fc in feature_classes:
+                for key, vals in df_radiomics[fc].items():
+                    vals = [float(v) for v in vals]
+                    if key == "Skewness":
+                        df_sign[f"{fc}-{key}"] = [1 if a <= 0 else 2 for a in vals]
+                    elif key == "Kurtosis":
+                        df_sign[f"{fc}-{key}"] = [1 if a <= 3 else 2 for a in vals]
+                    elif key == "Elongation":
+                        df_sign[f"{fc}-{key}"] = [1 if a <= np.mean(vals) else 2 for a in vals]
+                    elif key == "Flatness":
+                        df_sign[f"{fc}-{key}"] = [1 if a <= 0.5 else 2 for a in vals]
+                    elif key == "Sphericity":
+                        df_sign[f"{fc}-{key}"] = [1 if a <= np.mean(vals) else 2 for a in vals]
+                    else:
+                        df_sign[f"{fc}-{key}"] = np.digitize(vals, bins=np.linspace(np.min(vals),
+                                                                                    np.nextafter(np.max(vals), np.inf),
+                                                                                    4))
+            # volume features
+            df_volume = pd.DataFrame()
+            df = pd.read_json(f"{DATA_PATH}/vs_gk_{patient_id}/evaluation.json")
+            for idx, row in df.iterrows():
+                df_volume = df_volume.append({"id": str(row["slice"]),
+                                              "tumor_presence": row["VS_class_gt"],
+                                              "tumor_size_px": np.count_nonzero(cv2.drawContours(np.zeros((256, 256)),
+                                                                                                 [np.array(s).astype(
+                                                                                                     np.int64) for s in
+                                                                                                     np.array(
+                                                                                                         row[
+                                                                                                             "VS_segm_gt"],
+                                                                                                         dtype="object")],
+                                                                                                 -1,
+                                                                                                 (1),
+                                                                                                 -1))},
+                                             ignore_index=True)
+            bins = np.linspace(np.min(df_volume[df_volume["tumor_size_px"] >= 1]["tumor_size_px"]),
+                               np.nextafter(np.max(df_volume[df_volume["tumor_presence"] >= 1]["tumor_size_px"]),
+                                            np.inf),
+                               4)
+            res = [0] * len(df_volume)
+            res[np.where(df_volume["tumor_presence"] == 1)[0][0]:np.where(df_volume["tumor_presence"] == 1)[0][
+                                                                     -1] + 1] = np.digitize(
+                df_volume[df_volume["tumor_presence"] == 1]["tumor_size_px"], bins=bins)
+            dict_size_bins = {"tumor_size": bins.tolist()}
+            df_volume["tumor_size"] = np.array(res)
+            df_volume["tumor_presence"] = df_volume["tumor_presence"].apply(lambda x: x + 1)
+            # merge features
+            df_merged = df_volume.merge(df_performance.merge(df_sign, on="id", how="left"), on="id", how="left")
+            df_merged = df_merged.fillna(value=0)
+            clusters_metric_avg = {}
+        return df_merged.to_json(), json.dumps(dict_performance_bins), json.dumps(dict_size_bins), json.dumps(
+            clusters_metric_avg)
 
 
 @app.callback(
@@ -1620,70 +1839,148 @@ def update_data_parcats_detail(json_patient_id, json_selected_models):
     Input('dropdown-error-metric', "value"),
     Input('radioitem-dataset', "value"),
     Input('dropdown-feature', "value"),
-    Input('theme', "data"))
+    Input('theme', "data"),
+    Input('dropdown-pcd-cluster', "value"),
+    Input('dropdown-pcd-type', "value"),
+    Input('dict-clusters-metrics', "data"),
+)
 def update_parcats_detail(df_plot_json, dict_bin_mapping, dict_bin_mapping2, selected_metric, selected_dataset,
-                          selected_features, theme):
+                          selected_features, theme, pcd_type, number_cluster, df_cluster_metric_json):
     if df_plot_json is None or selected_metric is None or selected_dataset is None:
         raise PreventUpdate
     else:
-        df_new = pd.read_json(df_plot_json)
-        bin_mapping = json.loads(dict_bin_mapping)
-        bin_mapping_size = json.loads(dict_bin_mapping2)
-        if len(df_new) == 0:
-            return fig_no_model_selected
-        # define plot df
         lookup = {"DSC": "dice",
                   "ASSD": "assd",
                   "ACC": "dice",
                   "TNR": "dice",
                   "TPR": "dice"}
-        metric = lookup[selected_metric]
-        feature_list = get_feature_lookup_table(selected_features, metric, selected_dataset, type_level="detail")
-        df_plot = pd.DataFrame()
-        df_plot["id"] = df_new["id"]
-        df_plot["tumor_presence"] = df_new["tumor_presence"]
-        df_plot["tumor_size"] = df_new["tumor_size"]
-        performance_col = metric + "_" + selected_dataset
-        df_plot[performance_col] = df_new[performance_col].values
-        for feature in feature_list:
-            df_plot[feature] = df_new[[c for c in df_new.columns if feature in c][0]].values
-        plot_cols = df_plot.columns.to_list()
-        plot_cols.remove("id")
-        # Create dimensions
-        performance_col = metric + "_" + selected_dataset
-        lookup_dict = get_lookup_dict_detail(bin_mapping, bin_mapping_size)
-        # Create dimensions
-        perf_dim = [go.parcats.Dimension(values=df_plot[performance_col], **lookup_dict[performance_col]),
-                    go.parcats.Dimension(values=df_plot["tumor_presence"], **lookup_dict["tumor_presence"]),
-                    go.parcats.Dimension(values=df_plot["tumor_size"], **lookup_dict["tumor_size"]),
-                    ]
-        for dim in perf_dim:
-            if len(dim["ticktext"]) != len(set(dim["values"])):
-                return fig_not_possible
-        plot_cols.remove("tumor_presence")
-        plot_cols.remove("tumor_size")
-        plot_cols.remove(performance_col)
-        feature_dim = []
-        for f in plot_cols:
-            if "label" in lookup_dict[f].keys():
-                feature_dim.append(go.parcats.Dimension(values=df_plot[f], **lookup_dict[f]))
-            else:
-                feature_dim.append(go.parcats.Dimension(values=df_plot[f], label=f, **lookup_dict[f]))
-        for dim in feature_dim:
-            if len(dim["ticktext"]) != len(set(dim["values"])):
-                return fig_not_possible_other_features
-        # Create parcats trace
-        color = df_plot[performance_col]
-        if json.loads(theme) == "gray":
-            colorscale = [[0, 'rgb(42,42,42)'], [0.5, 'rgb(150,150,150)'], [1, 'rgb(210,210,210)']]
+        selected_metric = lookup[selected_metric]
+        if pcd_type == "model_pcd":
+            fig = create_pcd_model(df_plot_json, number_cluster, theme, df_cluster_metric_json, selected_metric)
         else:
-            colorscale = [[0, 'gold'], [0.5, 'purple'], [1, 'mediumblue']]
-        fig = go.Figure(data=[go.Parcats(dimensions=[*perf_dim, *feature_dim],
-                                         line={'color': color, 'colorscale': colorscale}, bundlecolors=True,
-                                         hoveron='category', hoverinfo='count+probability',
-                                         arrangement='freeform')])
-        fig.update_layout(margin=dict(l=20, r=30, b=10, t=40, pad=4))
+            fig = create_pcd_slice(df_plot_json, dict_bin_mapping, dict_bin_mapping2, selected_metric, selected_dataset,
+                                   selected_features, theme)
         return fig
+
+
+def create_pcd_model(df_plot_json, number_cluster, theme, df_cluster_metric_json, metric):
+    df_plot = pd.read_json(df_plot_json)
+    number_cluster = int(number_cluster)
+
+    if len(df_plot) == 0:
+        return fig_no_model_selected
+    if len(df_plot) == 1 and "use other feature" in df_plot.columns:
+        return fig_use_radiomics_features
+    if len(df_plot) == 1 and "cluster number invalid" in df_plot.columns:
+        return fig_cluster_number
+
+    # create averaged metric per cluster for order of clusters
+    dict_cluster_metric = json.loads(df_cluster_metric_json)
+    if metric == "dice":
+        to_sort = [-x for x in dict_cluster_metric.values()]
+    else:
+        to_sort = list(dict_cluster_metric.values())
+    sorted_idx = np.argsort(to_sort)
+    k = list(dict_cluster_metric.keys())
+    v = list(dict_cluster_metric.values())
+    idx_mapping = dict(zip(k, sorted_idx))
+    cluster_value_mapping = {k[i]: v[i] for i in sorted_idx}
+    df_plot["cluster"] = df_plot["cluster"].apply(lambda x: idx_mapping[str(x)])
+
+    # Create dimensions
+    lookup_dict = get_lookup_dict_detail_2()
+    k = list(dict_cluster_metric.keys())
+
+    cluster_lookup = dict(ticktext=[f"{i_} - {round(v[i], 3)}" for i_, i in enumerate(sorted_idx)],
+                          categoryarray=list(range(number_cluster)),
+                          label="Cluster")
+    idx_mapping = dict(zip(k, sorted_idx))
+    cluster_dim = go.parcats.Dimension(values=df_plot["cluster"], **cluster_lookup)
+    feature_dim = []
+    for f in list(df_plot.keys())[2:]:
+        lookup_dict_ = lookup_dict[f]
+        diff = list(set(lookup_dict[f]["categoryarray"]) - set(np.unique(df_plot[f].values)))
+        for d in diff:
+            idx = np.where(np.array(lookup_dict[f]["categoryarray"]) == d)[0][0]
+            lookup_dict[f]["ticktext"].pop(idx)
+            lookup_dict[f]["categoryarray"].pop(idx)
+        if "label" in lookup_dict[f].keys():
+            feature_dim.append(go.parcats.Dimension(values=df_plot[f], **lookup_dict_))
+        else:
+            feature_dim.append(go.parcats.Dimension(values=df_plot[f], label=f, **lookup_dict_))
+    # Create parcats trace
+    color = df_plot["cluster"]  # cluster_values
+    if json.loads(theme) == "gray":
+        colorscale = [[0, 'rgb(42,42,42)'], [0.5, 'rgb(150,150,150)'], [1, 'rgb(210,210,210)']]
+    else:
+        colorscale = [[0, 'gold'], [0.5, 'purple'], [1, 'mediumblue']]
+    fig = go.Figure(data=[go.Parcats(dimensions=[cluster_dim, *feature_dim],
+                                     line={'color': color, 'colorscale': colorscale}, bundlecolors=True,
+                                     hoveron='category', hoverinfo='count+probability',
+                                     arrangement='freeform')])
+    fig.update_layout(margin=dict(l=5,
+                                  r=5,
+                                  b=5,
+                                  t=20,
+                                  pad=4)
+                      )
+    return fig
+
+
+def create_pcd_slice(df_plot_json, dict_bin_mapping, dict_bin_mapping2, metric, selected_dataset,
+                     selected_features, theme):
+    df_new = pd.read_json(df_plot_json)
+    bin_mapping = json.loads(dict_bin_mapping)
+    bin_mapping_size = json.loads(dict_bin_mapping2)
+    if len(df_new) == 0:
+        return fig_no_model_selected
+    # define plot df
+    feature_list = get_feature_lookup_table(selected_features, metric, selected_dataset, type_level="detail")
+    df_plot = pd.DataFrame()
+    df_plot["id"] = df_new["id"]
+    df_plot["tumor_presence"] = df_new["tumor_presence"]
+    df_plot["tumor_size"] = df_new["tumor_size"]
+    performance_col = metric + "_" + selected_dataset
+    df_plot[performance_col] = df_new[performance_col].values
+    for feature in feature_list:
+        df_plot[feature] = df_new[[c for c in df_new.columns if feature in c][0]].values
+    plot_cols = df_plot.columns.to_list()
+    plot_cols.remove("id")
+    # Create dimensions
+    performance_col = metric + "_" + selected_dataset
+    lookup_dict = get_lookup_dict_detail(bin_mapping, bin_mapping_size)
+    # Create dimensions
+    perf_dim = [go.parcats.Dimension(values=df_plot[performance_col], **lookup_dict[performance_col]),
+                go.parcats.Dimension(values=df_plot["tumor_presence"], **lookup_dict["tumor_presence"]),
+                go.parcats.Dimension(values=df_plot["tumor_size"], **lookup_dict["tumor_size"]),
+                ]
+    for dim in perf_dim:
+        if len(dim["ticktext"]) != len(set(dim["values"])):
+            return fig_not_possible
+    plot_cols.remove("tumor_presence")
+    plot_cols.remove("tumor_size")
+    plot_cols.remove(performance_col)
+    feature_dim = []
+    for f in plot_cols:
+        if "label" in lookup_dict[f].keys():
+            feature_dim.append(go.parcats.Dimension(values=df_plot[f], **lookup_dict[f]))
+        else:
+            feature_dim.append(go.parcats.Dimension(values=df_plot[f], label=f, **lookup_dict[f]))
+    for dim in feature_dim:
+        if len(dim["ticktext"]) != len(set(dim["values"])):
+            return fig_not_possible_other_features
+    # Create parcats trace
+    color = df_plot[performance_col]
+    if json.loads(theme) == "gray":
+        colorscale = [[0, 'rgb(42,42,42)'], [0.5, 'rgb(150,150,150)'], [1, 'rgb(210,210,210)']]
+    else:
+        colorscale = [[0, 'gold'], [0.5, 'purple'], [1, 'mediumblue']]
+    fig = go.Figure(data=[go.Parcats(dimensions=[*perf_dim, *feature_dim],
+                                     line={'color': color, 'colorscale': colorscale}, bundlecolors=True,
+                                     hoveron='category', hoverinfo='count+probability',
+                                     arrangement='freeform')])
+    fig.update_layout(margin=dict(l=20, r=30, b=10, t=40, pad=4))
+    return fig
 
 
 if __name__ == "__main__":

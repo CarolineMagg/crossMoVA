@@ -101,3 +101,37 @@ fig_not_possible_other_features.update_layout(
         }
     ]
 )
+
+fig_use_radiomics_features = go.Figure()
+fig_use_radiomics_features.update_layout(
+    xaxis={"visible": False},
+    yaxis={"visible": False},
+    annotations=[
+        {
+            "text": "This window only works for Shape or Firstorder Features.",
+            "xref": "paper",
+            "yref": "paper",
+            "showarrow": False,
+            "font": {
+                "size": 28
+            }
+        }
+    ]
+)
+
+fig_cluster_number = go.Figure()
+fig_cluster_number.update_layout(
+    xaxis={"visible": False},
+    yaxis={"visible": False},
+    annotations=[
+        {
+            "text": "Not enough data for all clusters available.<br>Try different number of clusters.",
+            "xref": "paper",
+            "yref": "paper",
+            "showarrow": False,
+            "font": {
+                "size": 28
+            }
+        }
+    ]
+)
