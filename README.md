@@ -2,7 +2,7 @@
 
 The web-based visual analysis application allows interactive visual assessment of performances and prediction of automatic segmentation methods.
 
-![visualization overview](https://github.com/CarolineMagg/DA_vis/blob/main/ui_overview.png)
+![visualization overview](https://github.com/CarolineMagg/VA_brain_tumor/blob/main/ui_overview.png)
 
 ## Tasks
 T1 Performance comparison with performance heatmaps <br>
