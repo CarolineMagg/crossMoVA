@@ -7,7 +7,7 @@ The web-based visual analysis application allows interactive visual assessment o
 ## Tasks
 T1 Performance comparison with performance heatmaps <br>
 T2 Relationship to features, i.e., correlaction of performance or model clusters with dataset- and image-derived features <br>
-T5 Segmentation masks, i.e., model predictions and GT labels
+T3 Segmentation masks, i.e., model predictions and GT labels
 
 ## Algorithms
 The work is connected with [Domain Adaptation for Brain VS segmentation](https://github.com/CarolineMagg/DA_brain). 
