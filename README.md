@@ -1,4 +1,4 @@
-# crossMoVA - Visual Analysis application for automatic segmentation algorithms
+# crossMoVA - Visual Analysis Application for Automatic Segmentation Algorithms
 
 This repository contains the code for the paper: <br>
 Visual Analytics to Assess Deep Learning Models for Cross-Modal Brain Tumor Segmentation
