@@ -1,13 +1,27 @@
-# Visual Analysis application for automatic segmentation algorithms
+# crossMoVA - Visual Analysis application for automatic segmentation algorithms
+
+This repository contains the code for the paper: <br>
+Visual Analytics to Assess Deep Learning Models for Cross-Modal Brain Tumor Segmentation
 
 The web-based visual analysis application allows interactive visual assessment of performances and prediction of automatic segmentation methods.
 
+## Interface
+
 ![visualization overview](https://github.com/CarolineMagg/VA_brain_tumor/blob/main/ui_overview.png)
 
-## Tasks
+### Tasks
 T1 Performance comparison with performance heatmaps <br>
 T2 Relationship to features, i.e., correlaction of performance or model clusters with dataset- and image-derived features <br>
 T3 Segmentation masks, i.e., model predictions and GT labels
+
+### Visualization Techniques
+* Performance Heatmap (T1) <br>
+* Parallel Set Diagrams (T2) <br>
+* Prediction Heatmap with 2 Explicit Encoding Rules (T3)
+
+## Demo
+
+https://user-images.githubusercontent.com/39526782/177779932-7fafc881-784e-45cb-a7d8-3a1d5c7e11fc.mp4
 
 ## Algorithms
 The work is connected with [Domain Adaptation for Brain VS segmentation](https://github.com/CarolineMagg/DA_brain). 
